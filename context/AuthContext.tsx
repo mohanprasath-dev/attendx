@@ -3,7 +3,7 @@
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { auth } from '@/lib/firebase';
+import { getFirebaseAuth } from '@/lib/firebase';
 
 type AuthContextValue = {
   user: User | null;
@@ -28,23 +28,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!auth) {
+    const firebaseAuth = getFirebaseAuth();
+
+    if (!firebaseAuth) {
       setLoading(false);
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
-      setUser(nextUser);
+    const unsubscribe = onAuthStateChanged(
+      firebaseAuth,
+      async (nextUser) => {
+        setUser(nextUser);
 
-      if (nextUser) {
-        const token = await nextUser.getIdToken();
-        setSessionCookie(token);
-      } else {
+        try {
+          if (nextUser) {
+            const token = await nextUser.getIdToken();
+            setSessionCookie(token);
+          } else {
+            clearSessionCookie();
+          }
+        } finally {
+          setLoading(false);
+        }
+      },
+      () => {
         clearSessionCookie();
+        setUser(null);
+        setLoading(false);
       }
-
-      setLoading(false);
-    });
+    );
 
     return () => unsubscribe();
   }, []);

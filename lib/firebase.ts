@@ -1,5 +1,5 @@
-import { getApps, initializeApp, type FirebaseApp } from 'firebase/app';
-import { getAuth, type Auth } from 'firebase/auth';
+import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
+import { browserLocalPersistence, getAuth, initializeAuth, type Auth } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -11,17 +11,67 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
 };
 
-const hasFirebaseConfig = Object.values(firebaseConfig).every(Boolean);
+const hasFirebaseConfig = Object.values(firebaseConfig).every(
+  (value) => typeof value === 'string' && value.trim().length > 0
+);
 
 let app: FirebaseApp | undefined;
 let db: Firestore | undefined;
 let auth: Auth | undefined;
 
-if (hasFirebaseConfig) {
-  app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
-  db = getFirestore(app);
-  auth = getAuth(app);
+function getFirebaseApp() {
+  if (!hasFirebaseConfig) {
+    return null;
+  }
+
+  if (!app) {
+    app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+  }
+
+  return app;
 }
 
-export { app, auth, db };
+function createFirebaseAuth(firebaseApp: FirebaseApp) {
+  try {
+    return getAuth(firebaseApp);
+  } catch {
+    return initializeAuth(firebaseApp, {
+      persistence: browserLocalPersistence
+    });
+  }
+}
+
+export function getFirebaseDb() {
+  if (!db) {
+    const firebaseApp = getFirebaseApp();
+
+    if (!firebaseApp) {
+      return null;
+    }
+
+    db = getFirestore(firebaseApp);
+  }
+
+  return db;
+}
+
+export function getFirebaseAuth() {
+  if (!hasFirebaseConfig || typeof window === 'undefined') {
+    return null;
+  }
+
+  if (!auth) {
+    const firebaseApp = getFirebaseApp();
+
+    if (!firebaseApp) {
+      return null;
+    }
+
+    auth = createFirebaseAuth(firebaseApp);
+  }
+
+  return auth;
+}
+
+export { app, hasFirebaseConfig };
 export default app;

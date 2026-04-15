@@ -1,6 +1,6 @@
-import { addDoc, collection, getDocs, query, serverTimestamp, where, type Timestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, where, type Timestamp } from 'firebase/firestore';
 
-import { db } from '@/lib/firebase';
+import { getFirebaseDb } from '@/lib/firebase';
 
 export type CreateEventInput = {
   name: string;
@@ -19,6 +19,8 @@ export type EventRecord = {
 };
 
 function requireDb() {
+  const db = getFirebaseDb();
+
   if (!db) {
     throw new Error('Firestore is not configured. Set the NEXT_PUBLIC_FIREBASE_* environment variables first.');
   }
@@ -57,3 +59,16 @@ export async function getOrganizerEvents(uid: string) {
       return rightTime - leftTime;
     });
 }
+
+/**
+ * Fetch a single event by its Firestore document ID.
+ * Used by the public scan page (no auth required).
+ */
+export async function getEvent(eventId: string): Promise<EventRecord | null> {
+  const firestore = requireDb();
+  const snap = await getDoc(doc(collection(firestore, 'events'), eventId));
+
+  if (!snap.exists()) return null;
+
+  return { id: snap.id, ...(snap.data() as Omit<EventRecord, 'id'>) };
+}

@@ -1,10 +1,12 @@
 import { GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut } from 'firebase/auth';
 
-import { auth } from '@/lib/firebase';
+import { getFirebaseAuth } from '@/lib/firebase';
 
 const googleProvider = new GoogleAuthProvider();
 
 export async function signInWithGoogle() {
+  const auth = getFirebaseAuth();
+
   if (!auth) {
     throw new Error('Firebase Auth is not configured. Set the NEXT_PUBLIC_FIREBASE_* environment variables first.');
   }
@@ -13,6 +15,8 @@ export async function signInWithGoogle() {
 }
 
 export async function signOut() {
+  const auth = getFirebaseAuth();
+
   if (!auth) {
     throw new Error('Firebase Auth is not configured. Set the NEXT_PUBLIC_FIREBASE_* environment variables first.');
   }

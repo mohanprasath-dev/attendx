@@ -8,7 +8,7 @@ import {
   type Timestamp
 } from 'firebase/firestore';
 
-import { db } from '@/lib/firebase';
+import { getFirebaseDb } from '@/lib/firebase';
 
 export type Participant = {
   id: string;
@@ -19,6 +19,8 @@ export type Participant = {
 };
 
 function requireDb() {
+  const db = getFirebaseDb();
+
   if (!db) {
     throw new Error(
       'Firestore is not configured. Set the NEXT_PUBLIC_FIREBASE_* environment variables first.'

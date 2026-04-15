@@ -34,3 +34,12 @@ body {
   color: hsl(var(--foreground));
   font-feature-settings: 'rlig' 1, 'calt' 1;
 }
+
+@keyframes scan-sweep {
+  0%, 100% { transform: translateY(-120px); opacity: 0.9; }
+  50%       { transform: translateY(120px);  opacity: 0.6; }
+}
+
+.animate-scan-sweep {
+  animation: scan-sweep 2s ease-in-out infinite;
+}

@@ -7,11 +7,15 @@ import { signInWithGoogle } from '@/lib/auth';
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleGoogleSignIn() {
     try {
       setLoading(true);
+      setError(null);
       await signInWithGoogle();
+    } catch (signInError) {
+      setError(signInError instanceof Error ? signInError.message : 'Failed to sign in with Google.');
     } finally {
       setLoading(false);
     }
@@ -25,6 +29,11 @@ export default function LoginPage() {
         <p className="mt-3 text-sm leading-6 text-slate-300">
           Use your Google account to access the organizer dashboard.
         </p>
+        {error ? (
+          <div className="mt-5 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+            {error}
+          </div>
+        ) : null}
         <Button className="mt-8 w-full" onClick={handleGoogleSignIn} disabled={loading}>
           {loading ? 'Signing in...' : 'Sign in with Google'}
         </Button>
