@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -127,29 +128,34 @@ export default function DashboardPage() {
         ) : (
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             {events.map((eventItem) => (
-              <Card key={eventItem.id} className="border-white/10 bg-white/5 text-white shadow-xl shadow-black/20">
-                <CardHeader>
-                  <CardTitle>{eventItem.name}</CardTitle>
-                  <CardDescription className="text-slate-300">{eventItem.description}</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between text-sm text-slate-300">
-                    <span>Created</span>
-                    <span>{eventItem.createdAt ? eventItem.createdAt.toDate().toLocaleDateString() : 'Just now'}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-slate-300">
-                    <span>Rounds</span>
-                    <span>{eventItem.rounds.length}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {eventItem.rounds.map((round) => (
-                      <span key={round} className="rounded-full bg-white/10 px-3 py-1 text-xs text-slate-100">
-                        {round}
-                      </span>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+              <Link key={eventItem.id} href={`/dashboard/${eventItem.id}`} className="group block">
+                <Card className="h-full border-white/10 bg-white/5 text-white shadow-xl shadow-black/20 transition-colors group-hover:border-indigo-500/40 group-hover:bg-white/[0.07]">
+                  <CardHeader>
+                    <CardTitle>{eventItem.name}</CardTitle>
+                    <CardDescription className="text-slate-300">{eventItem.description}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between text-sm text-slate-300">
+                      <span>Created</span>
+                      <span>{eventItem.createdAt ? eventItem.createdAt.toDate().toLocaleDateString() : 'Just now'}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm text-slate-300">
+                      <span>Rounds</span>
+                      <span>{eventItem.rounds.length}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {eventItem.rounds.map((round) => (
+                        <span key={round} className="rounded-full bg-white/10 px-3 py-1 text-xs text-slate-100">
+                          {round}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-xs text-indigo-400 opacity-0 transition-opacity group-hover:opacity-100">
+                      View participants →
+                    </p>
+                  </CardContent>
+                </Card>
+              </Link>
             ))}
           </div>
         )}
