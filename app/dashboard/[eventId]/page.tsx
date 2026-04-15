@@ -16,6 +16,7 @@ import {
   getParticipants,
   type Participant
 } from '@/lib/participants';
+import { generateQRDataURL } from '@/lib/qr';
 
 type FormState = {
   name: string;
@@ -43,6 +44,11 @@ export default function EventDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
+  // QR codes: participantCode → base64 data URL
+  const [qrMap, setQrMap] = useState<Record<string, string>>({});
+  const [qrLoading, setQrLoading] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+
   // ─── Load event + participants ───────────────────────────────────────────────
   useEffect(() => {
     if (loading || !eventId) return;
@@ -52,7 +58,6 @@ export default function EventDetailPage() {
         setPageLoading(true);
         setError(null);
 
-        // Fetch event info (we need the organizer's event list)
         if (user) {
           const events = await getOrganizerEvents(user.uid);
           const found = events.find((e) => e.id === eventId) ?? null;
@@ -71,6 +76,35 @@ export default function EventDetailPage() {
     void load();
   }, [loading, user, eventId]);
 
+  // ─── Generate QR codes whenever participants change ─────────────────────────
+  useEffect(() => {
+    if (participants.length === 0) {
+      setQrMap({});
+      return;
+    }
+
+    async function buildQRMap() {
+      setQrLoading(true);
+
+      try {
+        const entries = await Promise.all(
+          participants.map(async (p) => {
+            const dataURL = await generateQRDataURL(p.participantCode, eventId);
+            return [p.participantCode, dataURL] as const;
+          })
+        );
+
+        setQrMap(Object.fromEntries(entries));
+      } catch {
+        // QR generation failing shouldn't block the rest of the UI
+      } finally {
+        setQrLoading(false);
+      }
+    }
+
+    void buildQRMap();
+  }, [participants, eventId]);
+
   // ─── Helpers ─────────────────────────────────────────────────────────────────
   function flash(msg: string) {
     setSuccessMsg(msg);
@@ -80,6 +114,54 @@ export default function EventDetailPage() {
   async function refreshParticipants() {
     const parts = await getParticipants(eventId);
     setParticipants(parts);
+  }
+
+  // ─── Download single QR as PNG ────────────────────────────────────────────
+  function downloadQR(participant: Participant) {
+    const dataURL = qrMap[participant.participantCode];
+
+    if (!dataURL) return;
+
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = `qr-${participant.name.replace(/\s+/g, '-').toLowerCase()}-${participant.participantCode.slice(0, 8)}.png`;
+    link.click();
+  }
+
+  // ─── Download all QRs as a ZIP ────────────────────────────────────────────
+  async function downloadAllQRs() {
+    if (participants.length === 0) return;
+
+    try {
+      setDownloadingAll(true);
+
+      // Dynamically import jszip so the bundle only loads it when needed
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+
+      for (const p of participants) {
+        const dataURL = qrMap[p.participantCode];
+
+        if (!dataURL) continue;
+
+        // Strip "data:image/png;base64," prefix → raw base64
+        const base64 = dataURL.replace(/^data:image\/png;base64,/, '');
+        const filename = `${p.name.replace(/\s+/g, '-').toLowerCase()}-${p.participantCode.slice(0, 8)}.png`;
+        zip.file(filename, base64, { base64: true });
+      }
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${event?.name ?? eventId}-qr-codes.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate ZIP');
+    } finally {
+      setDownloadingAll(false);
+    }
   }
 
   // ─── Add single participant ───────────────────────────────────────────────────
@@ -118,7 +200,6 @@ export default function EventDetailPage() {
       setError(err instanceof Error ? err.message : 'Failed to import CSV');
     } finally {
       setUploading(false);
-      // Reset file input so the same file can be re-uploaded if needed
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
@@ -126,11 +207,11 @@ export default function EventDetailPage() {
   // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-10 text-white">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
 
         {/* Breadcrumb */}
         <nav className="flex items-center gap-2 text-sm text-slate-400">
-          <Link href="/dashboard" className="hover:text-white transition-colors">
+          <Link href="/dashboard" className="transition-colors hover:text-white">
             Dashboard
           </Link>
           <span>/</span>
@@ -172,6 +253,19 @@ export default function EventDetailPage() {
               id="csv-upload"
               onChange={handleCsvUpload}
             />
+
+            {/* Download All QRs */}
+            {participants.length > 0 ? (
+              <Button
+                variant="outline"
+                className="border-white/20 bg-white/5 text-white hover:bg-white/10"
+                onClick={() => void downloadAllQRs()}
+                disabled={downloadingAll || qrLoading}
+              >
+                {downloadingAll ? 'Zipping…' : '⬇ Download All QRs'}
+              </Button>
+            ) : null}
+
             <Button
               variant="outline"
               className="border-white/20 bg-white/5 text-white hover:bg-white/10"
@@ -180,6 +274,7 @@ export default function EventDetailPage() {
             >
               {uploading ? 'Importing…' : '⬆ CSV Import'}
             </Button>
+
             <Button onClick={() => setIsFormOpen(true)}>+ Add Participant</Button>
           </div>
         </section>
@@ -227,42 +322,87 @@ export default function EventDetailPage() {
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-400">
                 {participants.length} participant{participants.length !== 1 ? 's' : ''}
+                {qrLoading ? (
+                  <span className="ml-2 text-slate-500">· generating QR codes…</span>
+                ) : null}
               </p>
             </div>
 
-            <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/5">
+            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-400">
                     <th className="px-4 py-3">#</th>
+                    <th className="px-4 py-3">QR</th>
                     <th className="px-4 py-3">Name</th>
                     <th className="px-4 py-3">Email</th>
                     <th className="px-4 py-3">Participant Code</th>
                     <th className="px-4 py-3">Joined</th>
+                    <th className="px-4 py-3">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {participants.map((p, idx) => (
-                    <tr
-                      key={p.id}
-                      className="border-b border-white/5 transition-colors hover:bg-white/5 last:border-0"
-                    >
-                      <td className="px-4 py-3 text-slate-500">{idx + 1}</td>
-                      <td className="px-4 py-3 font-medium text-white">{p.name}</td>
-                      <td className="px-4 py-3 text-slate-300">{p.email}</td>
-                      <td className="px-4 py-3">
-                        <Badge
-                          variant="outline"
-                          className="border-indigo-500/30 bg-indigo-500/10 font-mono text-[10px] text-indigo-300"
-                        >
-                          {p.participantCode}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400">
-                        {p.createdAt ? p.createdAt.toDate().toLocaleDateString() : '—'}
-                      </td>
-                    </tr>
-                  ))}
+                  {participants.map((p, idx) => {
+                    const qrDataURL = qrMap[p.participantCode];
+
+                    return (
+                      <tr
+                        key={p.id}
+                        className="border-b border-white/5 transition-colors hover:bg-white/5 last:border-0"
+                      >
+                        {/* # */}
+                        <td className="px-4 py-3 text-slate-500">{idx + 1}</td>
+
+                        {/* QR preview */}
+                        <td className="px-4 py-3">
+                          {qrDataURL ? (
+                            <img
+                              src={qrDataURL}
+                              alt={`QR code for ${p.name}`}
+                              width={52}
+                              height={52}
+                              className="rounded-md border border-white/10 bg-white p-0.5"
+                            />
+                          ) : (
+                            <div className="h-[52px] w-[52px] animate-pulse rounded-md bg-white/10" />
+                          )}
+                        </td>
+
+                        {/* Name */}
+                        <td className="px-4 py-3 font-medium text-white">{p.name}</td>
+
+                        {/* Email */}
+                        <td className="px-4 py-3 text-slate-300">{p.email}</td>
+
+                        {/* Code */}
+                        <td className="px-4 py-3">
+                          <Badge
+                            variant="outline"
+                            className="border-indigo-500/30 bg-indigo-500/10 font-mono text-[10px] text-indigo-300"
+                          >
+                            {p.participantCode}
+                          </Badge>
+                        </td>
+
+                        {/* Joined */}
+                        <td className="px-4 py-3 text-slate-400">
+                          {p.createdAt ? p.createdAt.toDate().toLocaleDateString() : '—'}
+                        </td>
+
+                        {/* Download QR */}
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => downloadQR(p)}
+                            disabled={!qrDataURL}
+                            className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-indigo-500/40 hover:bg-indigo-500/10 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            ⬇ Download QR
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
