@@ -10,6 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/context/AuthContext';
 import { getOrganizerEvents, type EventRecord } from '@/lib/events';
+import { getAttendance, type AttendanceRecord } from '@/lib/attendance';
+import { computeEligibility, type EligibilityResult } from '@/lib/eligibility';
 import {
   addParticipant,
   bulkAddParticipants,
@@ -34,6 +36,13 @@ export default function EventDetailPage() {
   const [pageLoading, setPageLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Tabs
+  const [activeTab, setActiveTab] = useState<'participants' | 'attendance'>('participants');
+
+  // Attendance & Eligibility
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [eligibilityMap, setEligibilityMap] = useState<Record<string, EligibilityResult>>({});
 
   // Add-participant form
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -62,11 +71,21 @@ export default function EventDetailPage() {
           const events = await getOrganizerEvents(user.uid);
           const found = events.find((e) => e.id === eventId) ?? null;
           setEvent(found);
-        }
 
-        const parts = await getParticipants(eventId);
-        setParticipants(parts);
-      } catch (err) {
+          if (found) {
+            const [parts, att] = await Promise.all([
+              getParticipants(eventId as string),
+              getAttendance(eventId as string)
+            ]);
+            setParticipants(parts);
+            setAttendanceRecords(att);
+
+            // Recompute eligibility map
+            const rounds = found.rounds || [];
+            setEligibilityMap(computeEligibility(parts, att, rounds));
+          }
+        }
+      } catch (err: any) {
         setError(err instanceof Error ? err.message : 'Failed to load data');
       } finally {
         setPageLoading(false);
@@ -162,6 +181,33 @@ export default function EventDetailPage() {
     } finally {
       setDownloadingAll(false);
     }
+  }
+
+  function exportAttendanceCsv() {
+    if (!event || participants.length === 0) return;
+
+    const headers = ['Name', 'Email', 'Participant Code', 'Rounds Attended', 'Eligible', 'Attendance %'];
+    const rows = participants.map((p) => {
+      const stats = eligibilityMap[p.participantCode];
+      return [
+        p.name,
+        p.email,
+        p.participantCode,
+        stats?.roundsAttended.join('; ') || 'None',
+        stats?.eligible ? 'Yes' : 'No',
+        stats ? `${(stats.percentage * 100).toFixed(0)}%` : '0%'
+      ];
+    });
+
+    const csvContent = [headers.join(','), ...rows.map(row => row.map(cell => `"${cell}"`).join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${event.name.replace(/\s+/g, '_')}_attendance.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
   // ─── Add single participant ───────────────────────────────────────────────────
@@ -292,7 +338,27 @@ export default function EventDetailPage() {
           </div>
         ) : null}
 
-        {/* Participant list */}
+        {/* Tabs navigation */}
+        <div className="flex gap-4 border-b border-white/10 pb-4">
+          <button
+            className={`pb-2 font-medium transition-colors ${
+              activeTab === 'participants' ? 'border-b-2 border-indigo-500 text-indigo-400' : 'text-slate-400 hover:text-white'
+            }`}
+            onClick={() => setActiveTab('participants')}
+          >
+            Participants
+          </button>
+          <button
+            className={`pb-2 font-medium transition-colors ${
+              activeTab === 'attendance' ? 'border-b-2 border-indigo-500 text-indigo-400' : 'text-slate-400 hover:text-white'
+            }`}
+            onClick={() => setActiveTab('attendance')}
+          >
+            Attendance
+          </button>
+        </div>
+
+        {/* Tab content */}
         {pageLoading ? (
           <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-sm text-slate-300">
             Loading participants…
@@ -328,84 +394,157 @@ export default function EventDetailPage() {
               </p>
             </div>
 
-            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-400">
-                    <th className="px-4 py-3">#</th>
-                    <th className="px-4 py-3">QR</th>
-                    <th className="px-4 py-3">Name</th>
-                    <th className="px-4 py-3">Email</th>
-                    <th className="px-4 py-3">Participant Code</th>
-                    <th className="px-4 py-3">Joined</th>
-                    <th className="px-4 py-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {participants.map((p, idx) => {
-                    const qrDataURL = qrMap[p.participantCode];
+            {activeTab === 'participants' ? (
+              <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-400">
+                      <th className="px-4 py-3">#</th>
+                      <th className="px-4 py-3">QR</th>
+                      <th className="px-4 py-3">Name</th>
+                      <th className="px-4 py-3">Email</th>
+                      <th className="px-4 py-3">Participant Code</th>
+                      <th className="px-4 py-3">Joined</th>
+                      <th className="px-4 py-3">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {participants.map((p, idx) => {
+                      const qrDataURL = qrMap[p.participantCode];
 
-                    return (
-                      <tr
-                        key={p.id}
-                        className="border-b border-white/5 transition-colors hover:bg-white/5 last:border-0"
-                      >
-                        {/* # */}
-                        <td className="px-4 py-3 text-slate-500">{idx + 1}</td>
+                      return (
+                        <tr
+                          key={p.id}
+                          className="border-b border-white/5 transition-colors hover:bg-white/5 last:border-0"
+                        >
+                          {/* # */}
+                          <td className="px-4 py-3 text-slate-500">{idx + 1}</td>
 
-                        {/* QR preview */}
-                        <td className="px-4 py-3">
-                          {qrDataURL ? (
-                            <img
-                              src={qrDataURL}
-                              alt={`QR code for ${p.name}`}
-                              width={52}
-                              height={52}
-                              className="rounded-md border border-white/10 bg-white p-0.5"
-                            />
-                          ) : (
-                            <div className="h-[52px] w-[52px] animate-pulse rounded-md bg-white/10" />
-                          )}
-                        </td>
+                          {/* QR preview */}
+                          <td className="px-4 py-3">
+                            {qrDataURL ? (
+                              <img
+                                src={qrDataURL}
+                                alt={`QR code for ${p.name}`}
+                                width={52}
+                                height={52}
+                                className="rounded-md border border-white/10 bg-white p-0.5"
+                              />
+                            ) : (
+                              <div className="h-[52px] w-[52px] animate-pulse rounded-md bg-white/10" />
+                            )}
+                          </td>
 
-                        {/* Name */}
-                        <td className="px-4 py-3 font-medium text-white">{p.name}</td>
+                          {/* Name */}
+                          <td className="px-4 py-3 font-medium text-white">{p.name}</td>
 
-                        {/* Email */}
-                        <td className="px-4 py-3 text-slate-300">{p.email}</td>
+                          {/* Email */}
+                          <td className="px-4 py-3 text-slate-300">{p.email}</td>
 
-                        {/* Code */}
-                        <td className="px-4 py-3">
-                          <Badge
-                            variant="outline"
-                            className="border-indigo-500/30 bg-indigo-500/10 font-mono text-[10px] text-indigo-300"
-                          >
-                            {p.participantCode}
-                          </Badge>
-                        </td>
+                          {/* Code */}
+                          <td className="px-4 py-3">
+                            <Badge
+                              variant="outline"
+                              className="border-indigo-500/30 bg-indigo-500/10 font-mono text-[10px] text-indigo-300"
+                            >
+                              {p.participantCode}
+                            </Badge>
+                          </td>
 
-                        {/* Joined */}
-                        <td className="px-4 py-3 text-slate-400">
-                          {p.createdAt ? p.createdAt.toDate().toLocaleDateString() : '—'}
-                        </td>
+                          {/* Joined */}
+                          <td className="px-4 py-3 text-slate-400">
+                            {p.createdAt ? p.createdAt.toDate().toLocaleDateString() : '—'}
+                          </td>
 
-                        {/* Download QR */}
-                        <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => downloadQR(p)}
-                            disabled={!qrDataURL}
-                            className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-indigo-500/40 hover:bg-indigo-500/10 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            ⬇ Download QR
-                          </button>
-                        </td>
+                          {/* Download QR */}
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              onClick={() => downloadQR(p)}
+                              disabled={!qrDataURL}
+                              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-indigo-500/40 hover:bg-indigo-500/10 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              ⬇ Download QR
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="flex-1">
+                    <p className="text-xs text-slate-400">Total Participants</p>
+                    <p className="text-xl font-semibold text-white">{participants.length}</p>
+                  </div>
+                  <div className="flex-1 border-l border-white/10 pl-4">
+                    <p className="text-xs text-slate-400">Total Check-ins</p>
+                    <p className="text-xl font-semibold text-white">{attendanceRecords.length}</p>
+                  </div>
+                  <div className="flex-1 border-l border-white/10 pl-4">
+                    <p className="text-xs text-slate-400">Certificate Eligible</p>
+                    <p className="text-xl font-semibold text-emerald-400">
+                      {Object.values(eligibilityMap).filter((e) => e.eligible).length}
+                    </p>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <Button variant="outline" className="border-white/20 bg-white/5" onClick={exportAttendanceCsv}>
+                      Export CSV
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-400">
+                        <th className="px-4 py-3">Name</th>
+                        <th className="px-4 py-3">Email</th>
+                        <th className="px-4 py-3">Rounds Attended</th>
+                        <th className="px-4 py-3">Attendance %</th>
+                        <th className="px-4 py-3">Certificate Eligible</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {participants.map((p) => {
+                        const stats = eligibilityMap[p.participantCode];
+                        let rowClass = 'border-b border-white/5 transition-colors hover:bg-white/5 last:border-0';
+                        if (stats?.eligible) {
+                          rowClass += ' bg-emerald-500/5';
+                        } else if (stats && stats.percentage > 0) {
+                          rowClass += ' bg-amber-500/5';
+                        } else {
+                          rowClass += ' bg-red-500/5';
+                        }
+
+                        return (
+                          <tr key={p.id} className={rowClass}>
+                            <td className="px-4 py-3 font-medium text-white">{p.name}</td>
+                            <td className="px-4 py-3 text-slate-300">{p.email}</td>
+                            <td className="px-4 py-3 text-slate-300">
+                              {stats?.roundsAttended.length ? stats.roundsAttended.join(', ') : 'None'}
+                            </td>
+                            <td className="px-4 py-3 text-slate-300">
+                              {stats ? `${(stats.percentage * 100).toFixed(0)}%` : '0%'}
+                            </td>
+                            <td className="px-4 py-3">
+                              {stats?.eligible ? (
+                                <Badge className="bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30">Yes</Badge>
+                              ) : (
+                                <Badge className="bg-red-500/20 text-red-300 hover:bg-red-500/30">No</Badge>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
